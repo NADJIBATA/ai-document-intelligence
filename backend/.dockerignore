@@ -1,0 +1,17 @@
+# Only app/, alembic/, scripts/ and the requirement files enter the image.
+**/__pycache__
+**/*.py[cod]
+.venv
+venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+coverage.xml
+htmlcov
+tests
+.env
+.env.*
+*.log
+Dockerfile
+.dockerignore

@@ -1,0 +1,85 @@
+[project]
+name = "ai-document-intelligence-backend"
+version = "0.1.0"
+description = "Backend of the AI Document Intelligence Platform (FastAPI, RAG, Celery)"
+requires-python = ">=3.12"
+readme = "../README.md"
+
+# Dependencies are declared in requirements.txt / requirements-dev.txt.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["app", "tests"]
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",   # pycodestyle
+  "F",        # pyflakes
+  "I",        # isort
+  "B",        # bugbear
+  "UP",       # pyupgrade
+  "N",        # pep8-naming
+  "S",        # bandit (security)
+  "SIM",      # simplify
+  "ASYNC",    # async pitfalls
+  "RUF",      # ruff-specific
+  "PTH",      # pathlib
+  "T20",      # no print()
+]
+ignore = [
+  "B008",     # FastAPI Depends()/Body() in defaults is the intended pattern
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S311"]
+"alembic/**" = ["N999"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "scripts", "tests", "evaluation"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+packages = ["app", "scripts"]
+warn_unreachable = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+# Celery and the MinIO SDK ship without complete type information.
+module = ["celery.*", "kombu.*", "minio.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.workers.*"]
+disallow_untyped_decorators = false
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", ".."]
+addopts = "-ra --strict-markers"
+# Dump the stack of every thread if a single test takes longer than this (hang diagnosis).
+faulthandler_timeout = 120
+markers = [
+  "integration: requires PostgreSQL and Redis (see docker-compose.test.yml)",
+]
+filterwarnings = [
+  "error::pytest.PytestUnraisableExceptionWarning",
+]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
