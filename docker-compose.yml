@@ -1,0 +1,263 @@
+# AI Document Intelligence Platform - full stack.
+#
+#   cp .env.example .env        # then set the secrets (see the comments in the file)
+#   docker compose up -d        # http://localhost
+#
+# Only nginx is published on the host (HTTP_PORT, default 80). The vLLM servers are
+# also reachable from the host on 127.0.0.1:8001 / 127.0.0.1:8002 (RAG evaluation).
+# Production overrides: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+name: docintel
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Settings shared by the API, the worker and the migration job. Values from .env are
+# loaded first; the service addresses below always win (they are Docker-internal).
+x-backend: &backend
+  build:
+    context: ./backend
+    args:
+      APP_VERSION: ${APP_VERSION:-0.1.0}
+  image: ${BACKEND_IMAGE:-docintel-backend}:${APP_VERSION:-0.1.0}
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-docintel}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-docintel}
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    CELERY_RESULT_BACKEND: redis://redis:6379/2
+    QDRANT_URL: http://qdrant:6333
+    MINIO_ENDPOINT: minio:9000
+    MINIO_SECURE: "false"
+  logging: *logging
+  restart: unless-stopped
+
+x-vllm: &vllm
+  image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
+  profiles: ["gpu"]
+  environment:
+    HF_TOKEN: ${HF_TOKEN:-}
+    # The V2 model runner needs pinned memory (UVA), which vLLM disables under
+    # WSL 2 (Docker Desktop on Windows): "RuntimeError: UVA is not available".
+    VLLM_USE_V2_MODEL_RUNNER: ${VLLM_USE_V2_MODEL_RUNNER:-0}
+  volumes:
+    - hf-cache:/root/.cache/huggingface
+  # vLLM worker processes communicate through shared memory.
+  shm_size: "1gb"
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+    interval: 15s
+    timeout: 5s
+    retries: 5
+    # First start: the model is downloaded from Hugging Face (about 1.2 GB each).
+    start_period: 15m
+  logging: *logging
+  restart: unless-stopped
+
+services:
+  # ------------------------------------------------------------------ data stores
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-docintel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-docintel}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+    restart: unless-stopped
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    # Append-only file: queued jobs survive a restart.
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+    restart: unless-stopped
+
+  qdrant:
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.13.4}
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT__TELEMETRY_DISABLED: "true"
+    # An empty QDRANT__SERVICE__API_KEY still enables authentication (with an
+    # empty key), so every request without an api-key header gets a 401.
+    # Drop the variable when QDRANT_API_KEY is not set.
+    command:
+      - bash
+      - -c
+      - '[ -n "$$QDRANT__SERVICE__API_KEY" ] || unset QDRANT__SERVICE__API_KEY; exec ./entrypoint.sh'
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      # The image ships neither curl nor wget: open a TCP connection with bash.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+    restart: unless-stopped
+
+  minio:
+    # MinIO no longer publishes official images; any S3-compatible server works.
+    # Pin a release tag in .env for reproducible deployments (MINIO_IMAGE).
+    image: ${MINIO_IMAGE:-pgsty/minio:latest}
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY in .env}
+    volumes:
+      - minio-data:/data
+    # No healthcheck: the image does not guarantee any HTTP client. The backend creates
+    # the bucket as soon as MinIO answers (start-up, /ready or first upload).
+    logging: *logging
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------- backend
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    <<: *backend
+    command:
+      - uvicorn
+      - app.main:create_app
+      - --factory
+      - --host=0.0.0.0
+      - --port=8000
+      - --workers=${UVICORN_WORKERS:-1}
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+      - --no-server-header
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  worker:
+    <<: *backend
+    command:
+      - celery
+      - --app=app.workers.celery_app:celery_app
+      - worker
+      - --queues=ingestion,analysis
+      - --concurrency=${CELERY_CONCURRENCY:-2}
+      - --loglevel=INFO
+    healthcheck:
+      test: ["CMD-SHELL", "celery --app=app.workers.celery_app:celery_app inspect ping --destination \"celery@$$HOSTNAME\" --timeout 10 > /dev/null"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+    # Lets running jobs finish (acks_late: an interrupted job is redelivered anyway).
+    stop_grace_period: 60s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  # ---------------------------------------------------------------- model servers
+  vllm-embedding:
+    <<: *vllm
+    command:
+      - --model=${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+      - --runner=pooling
+      - --gpu-memory-utilization=${VLLM_EMBEDDING_GPU_MEMORY:-0.40}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-2048}
+      - --max-num-seqs=32
+      - --enforce-eager
+      - --host=0.0.0.0
+      - --port=8000
+    ports:
+      - "127.0.0.1:8001:8000"
+
+  vllm-reranker:
+    <<: *vllm
+    command:
+      - --model=${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      - --runner=pooling
+      - --gpu-memory-utilization=${VLLM_RERANKER_GPU_MEMORY:-0.40}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-2048}
+      - --max-num-seqs=32
+      - --enforce-eager
+      - --host=0.0.0.0
+      - --port=8000
+    ports:
+      - "127.0.0.1:8002:8000"
+    # One server at a time measures the free GPU memory at start-up.
+    depends_on:
+      vllm-embedding:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------- frontend
+  frontend:
+    build:
+      context: ./frontend
+    image: ${FRONTEND_IMAGE:-docintel-frontend}:${APP_VERSION:-0.1.0}
+    logging: *logging
+    restart: unless-stopped
+
+  nginx:
+    image: ${NGINX_IMAGE:-nginx:1.28-alpine}
+    environment:
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-50}
+    volumes:
+      # Rendered to /etc/nginx/conf.d/default.conf by the image entrypoint.
+      - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    logging: *logging
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  qdrant-data:
+  minio-data:
+  hf-cache:

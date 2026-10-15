@@ -1,0 +1,51 @@
+# Production overrides, applied on top of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Requirements: HTTPS in front of nginx (load balancer, or a TLS certificate added to
+# nginx), a JWT_SECRET of at least 32 random characters and strong passwords in .env
+# (the API refuses to start in production with an insecure JWT secret).
+
+x-production: &production
+  APP_ENV: production
+  ENABLE_DOCS: "false"
+  # The refresh cookie is only sent over HTTPS.
+  COOKIE_SECURE: "true"
+  LOG_JSON: "true"
+
+services:
+  migrate:
+    environment: *production
+
+  backend:
+    environment: *production
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  worker:
+    environment: *production
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # The model servers are not reachable from the host in production.
+  vllm-embedding:
+    ports: !reset []
+
+  vllm-reranker:
+    ports: !reset []
