@@ -1,0 +1,29 @@
+ROUTER X200 USER MANUAL
+
+Package Contents and Installation
+
+The box contains the X200 router, a 12 V power adapter, an Ethernet cable and this manual. Place the router in a central, elevated location, away from metal objects and microwave ovens. Connect the WAN port to your modem with the Ethernet cable, then connect the power adapter. The power LED turns solid green after about ninety seconds when the router is ready.
+
+First Configuration
+
+Connect a computer to the router through Wi-Fi or a LAN port and open http://192.168.8.1 in a browser. The default administrator password is printed on the label under the router. On first login, the setup wizard forces you to choose a new administrator password of at least twelve characters, then to configure the internet connection type and the Wi-Fi network name.
+
+Wi-Fi Settings
+
+The X200 broadcasts on 2.4 GHz and 5 GHz bands under a single network name by default; band steering moves compatible devices to the faster band. WPA3 Personal is enabled by default, with WPA2 compatibility mode for older devices. A guest network can be activated in the Wi-Fi menu; guest devices are isolated from the local network and can be limited to a bandwidth of your choice.
+
+Firmware Updates
+
+The router checks for firmware updates every night at 03:00 and installs security updates automatically. Feature updates are installed only after confirmation in the administration interface. Never unplug the router while the status LED blinks orange: an interrupted update can make the device unusable. A manual update is possible by uploading a signed firmware file in the System menu.
+
+Factory Reset
+
+To restore the factory settings, keep the router powered on and press the recessed reset button on the back with a paperclip for ten seconds, until the status LED flashes red. All settings, including the Wi-Fi password and the administrator password, are erased. The router restarts with the default password printed on its label.
+
+Troubleshooting
+
+If there is no internet access, check that the WAN LED is green; if it is off, check the cable between the modem and the router. A blinking red WAN LED means that the router reaches the modem but cannot obtain an IP address: restart the modem first, then the router. If Wi-Fi speed is low, move the router away from obstacles or select a less congested channel in the Wi-Fi menu.
+
+Warranty
+
+The X200 is covered by a two-year limited warranty from the date of purchase, on presentation of the invoice. The warranty covers manufacturing defects but excludes damage caused by power surges, liquids, drops or modifications of the device. To make a warranty claim, contact support with the serial number printed on the label; a replacement unit is shipped within five business days after diagnosis.

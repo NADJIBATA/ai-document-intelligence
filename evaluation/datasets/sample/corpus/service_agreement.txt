@@ -1,0 +1,37 @@
+MASTER SERVICE AGREEMENT
+
+1. Parties and Purpose
+
+This Master Service Agreement is entered into between Northwind Analytics Ltd, the Provider, and Contoso Retail SA, the Customer. The Provider supplies a hosted document analytics platform, onboarding services and technical support. The agreement sets the general terms; each order form describes the subscribed modules, the number of users and the prices. In case of conflict, the order form prevails over this agreement for the commercial terms only.
+
+2. Term and Renewal
+
+The agreement starts on the effective date of the first order form and runs for an initial term of thirty-six months. It then renews automatically for successive periods of twelve months unless either party sends a written notice of non-renewal at least ninety days before the end of the current period. Prices may be revised at renewal, within the limit of the annual consumer price index increase plus three percent.
+
+3. Fees and Payment
+
+Subscription fees are invoiced annually in advance. Invoices are payable within forty-five days of the invoice date by bank transfer. Any amount not paid when due bears late payment interest at a rate of one percent per month, plus a fixed recovery fee of forty euros per invoice. If an invoice remains unpaid thirty days after a formal reminder, the Provider may suspend access to the platform until full payment.
+
+4. Service Levels
+
+The Provider guarantees a monthly availability of 99.9 percent for the production environment, excluding scheduled maintenance announced at least five business days in advance. When availability falls below this commitment, the Customer receives a service credit equal to ten percent of the monthly fee per started tranche of 0.5 percent below the target, capped at fifty percent of the monthly fee. Service credits are the exclusive remedy for unavailability.
+
+5. Support
+
+Support requests are submitted through the support portal. Critical incidents, meaning a complete outage of the production environment, receive a first response within one hour, twenty-four hours a day. High priority incidents receive a response within four business hours, and other requests within two business days. Support is provided in English and French.
+
+6. Data Protection
+
+The Provider processes personal data only on documented instructions from the Customer and acts as a processor within the meaning of the GDPR. All data is hosted in data centres located in the European Union. The Provider notifies the Customer of any personal data breach without undue delay and at the latest within forty-eight hours after becoming aware of it. Subprocessors are listed in an annex that the Provider keeps up to date.
+
+7. Liability
+
+Each party's total liability under this agreement is limited to the amount of fees paid by the Customer during the twelve months preceding the event giving rise to the claim. Neither party is liable for indirect damages such as loss of profit, loss of business or loss of reputation. These limitations do not apply to bodily injury, gross negligence, wilful misconduct or breaches of confidentiality.
+
+8. Termination
+
+Either party may terminate the agreement for material breach if the breach is not remedied within thirty days of a written notice describing it. Upon termination, the Customer may export its data for sixty days through the standard export function. After this period, the Provider deletes the Customer data, including backups, within a further thirty days and confirms the deletion in writing.
+
+9. Governing Law
+
+This agreement is governed by French law. The parties will first try to settle any dispute amicably through a meeting of their executive sponsors. Failing an agreement within thirty days, the dispute will be submitted to the exclusive jurisdiction of the commercial courts of Paris.

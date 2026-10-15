@@ -1,0 +1,34 @@
+# Sample dataset for evaluation/datasets/sample/corpus (python -m evaluation.run).
+# References: "<file name>#<chunk index>" (python -m evaluation.corpus lists the passages).
+{"id": "contract-renewal", "question": "How long is the initial term of the service agreement and how does it renew?", "relevant_chunk_ids": ["service_agreement.txt#0"]}
+{"id": "contract-late-payment", "question": "What happens if the customer pays an invoice late?", "relevant_chunk_ids": ["service_agreement.txt#1"]}
+{"id": "contract-sla-credit", "question": "What compensation does the customer get when the platform is unavailable?", "relevant_chunk_ids": ["service_agreement.txt#1"]}
+{"id": "contract-critical-response", "question": "How fast is the first response to a complete production outage?", "relevant_chunk_ids": ["service_agreement.txt#2"]}
+{"id": "contract-breach-notification", "question": "Within what delay must a personal data breach be reported to the customer?", "relevant_chunk_ids": ["service_agreement.txt#2"]}
+{"id": "contract-liability-cap", "question": "What is the maximum amount either party can be liable for?", "relevant_chunk_ids": ["service_agreement.txt#3"]}
+{"id": "contract-data-after-termination", "question": "Can the customer retrieve its data once the contract ends?", "relevant_chunk_ids": ["service_agreement.txt#3"]}
+{"id": "contract-jurisdiction", "question": "Which courts handle disputes under the agreement?", "relevant_chunk_ids": ["service_agreement.txt#4"]}
+{"id": "handbook-remote", "question": "How many days per week can I work from home?", "relevant_chunk_ids": ["employee_handbook.txt#0"]}
+{"id": "handbook-carry-over", "question": "Can unused vacation days be carried over to next year?", "relevant_chunk_ids": ["employee_handbook.txt#1"]}
+{"id": "handbook-sick", "question": "What should I do when I am ill and cannot come to work?", "relevant_chunk_ids": ["employee_handbook.txt#1"]}
+{"id": "handbook-hotel", "question": "What is the hotel budget for a business trip to Paris?", "relevant_chunk_ids": ["employee_handbook.txt#2"]}
+{"id": "handbook-certification-refund", "question": "Do I have to repay a certification if I resign?", "relevant_chunk_ids": ["employee_handbook.txt#2"]}
+{"id": "router-default-password", "question": "Where can I find the default admin password of the router?", "relevant_chunk_ids": ["router_x200_manual.txt#0", "router_x200_manual.txt#2"]}
+{"id": "router-reset", "question": "How do I restore the X200 to factory settings?", "relevant_chunk_ids": ["router_x200_manual.txt#2"]}
+{"id": "router-guest", "question": "Is it possible to give visitors Wi-Fi access without exposing my local network?", "relevant_chunk_ids": ["router_x200_manual.txt#1"]}
+{"id": "router-wan-red", "question": "The WAN light is blinking red, what does it mean?", "relevant_chunk_ids": ["router_x200_manual.txt#2"]}
+{"id": "router-warranty", "question": "Is damage from a power surge covered by the warranty?", "relevant_chunk_ids": ["router_x200_manual.txt#3"]}
+{"id": "router-update-unplug", "question": "Is it safe to unplug the router during a firmware update?", "relevant_chunk_ids": ["router_x200_manual.txt#1"]}
+{"id": "secu-password-length", "question": "Quelle est la longueur minimale d'un mot de passe ?", "relevant_chunk_ids": ["politique_securite.txt#0"]}
+{"id": "secu-sms", "question": "Peut-on encore utiliser les codes SMS pour la double authentification ?", "relevant_chunk_ids": ["politique_securite.txt#1"]}
+{"id": "secu-incident", "question": "J'ai perdu mon ordinateur portable, que dois-je faire et dans quel délai ?", "relevant_chunk_ids": ["politique_securite.txt#2"]}
+{"id": "secu-backup", "question": "Combien de temps les sauvegardes hors site sont-elles conservées ?", "relevant_chunk_ids": ["politique_securite.txt#2"]}
+{"id": "secu-departure", "question": "Quand les accès d'un salarié qui quitte l'entreprise sont-ils supprimés ?", "relevant_chunk_ids": ["politique_securite.txt#3"]}
+{"id": "report-revenue", "question": "What was the revenue in 2025 and how much did it grow?", "relevant_chunk_ids": ["annual_report_2025.txt#0"]}
+{"id": "report-margin", "question": "What operating margin did the group achieve?", "relevant_chunk_ids": ["annual_report_2025.txt#0"]}
+{"id": "report-segments", "question": "Which share of revenue comes from software subscriptions?", "relevant_chunk_ids": ["annual_report_2025.txt#1"]}
+{"id": "report-headcount", "question": "How many employees did the company have at the end of 2025?", "relevant_chunk_ids": ["annual_report_2025.txt#1"]}
+{"id": "report-climate", "question": "What is the emissions reduction target for 2030?", "relevant_chunk_ids": ["annual_report_2025.txt#2"]}
+{"id": "report-dividend", "question": "How much dividend per share will be proposed?", "relevant_chunk_ids": ["annual_report_2025.txt#3"]}
+{"id": "cross-gdpr-eu", "question": "Where is customer data hosted and who acts as data processor?", "relevant_chunk_ids": ["service_agreement.txt#2"]}
+{"id": "cross-cyber-insurance", "question": "How much cyber insurance coverage does the group have?", "relevant_chunk_ids": ["annual_report_2025.txt#2"]}

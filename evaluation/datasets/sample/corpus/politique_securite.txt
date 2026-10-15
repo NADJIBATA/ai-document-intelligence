@@ -1,0 +1,29 @@
+POLITIQUE DE SÉCURITÉ DES SYSTÈMES D'INFORMATION
+
+Objet et périmètre
+
+La présente politique définit les règles de sécurité applicables à tous les collaborateurs, prestataires et stagiaires qui utilisent les systèmes d'information de l'entreprise. Elle couvre les postes de travail, les téléphones professionnels, les applications métier, les services cloud et les données qu'ils contiennent. Tout manquement peut entraîner la suspension des accès et des sanctions disciplinaires.
+
+Mots de passe
+
+Les mots de passe doivent comporter au moins quatorze caractères et ne jamais être réutilisés entre plusieurs services. L'utilisation du gestionnaire de mots de passe fourni par l'entreprise est obligatoire. Les mots de passe ne sont plus changés périodiquement, mais immédiatement en cas de suspicion de compromission. Il est interdit de communiquer son mot de passe, y compris au support informatique, qui ne le demandera jamais.
+
+Authentification multifacteur
+
+L'authentification multifacteur est obligatoire pour la messagerie, le VPN, les outils de développement et toutes les applications accessibles depuis internet. Les facteurs acceptés sont l'application d'authentification de l'entreprise et les clés de sécurité physiques. Les codes envoyés par SMS ne sont plus acceptés depuis le 1er janvier 2025, en raison du risque de détournement de numéro.
+
+Classification des données
+
+Les données sont classées en quatre niveaux : public, interne, confidentiel et secret. Les documents confidentiels ne peuvent être partagés à l'extérieur qu'avec un lien nominatif et une date d'expiration. Les données de niveau secret ne doivent jamais être stockées sur un poste personnel ni dans un service cloud non validé par l'équipe sécurité. Chaque document doit porter sa classification dans son en-tête.
+
+Gestion des incidents
+
+Tout incident de sécurité, comme la perte d'un ordinateur, un courriel d'hameçonnage ouvert ou un comportement anormal d'un poste, doit être signalé au centre opérationnel de sécurité dans un délai de quinze minutes, par le bouton de signalement ou au numéro d'astreinte. Il ne faut pas éteindre un poste suspect : il doit être débranché du réseau et laissé allumé pour l'analyse.
+
+Sauvegardes
+
+Les serveurs de production sont sauvegardés chaque nuit, avec une copie hors site immuable conservée pendant trente-cinq jours. Une restauration complète est testée chaque trimestre et le résultat est consigné dans le registre de continuité. Les postes de travail ne sont pas sauvegardés : les documents doivent être enregistrés dans l'espace de stockage partagé de l'équipe.
+
+Départ d'un collaborateur
+
+Lors du départ d'un collaborateur, ses accès sont révoqués au plus tard le jour de son départ à 18 heures. Le matériel est restitué au service informatique, qui efface les données de manière sécurisée avant toute réaffectation. Le responsable hiérarchique vérifie le transfert des documents utiles et la redirection de la messagerie pendant trois mois.
