@@ -1,0 +1,21 @@
+# Prometheus configuration (mounted by docker-compose.yml).
+# The backend is scraped on the internal Docker network: /metrics is never published
+# (nginx answers 404). Scrape metrics are exact with one API process per container
+# (UVICORN_WORKERS=1, the default): scale with more containers, not more workers.
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: docintel-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8000"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

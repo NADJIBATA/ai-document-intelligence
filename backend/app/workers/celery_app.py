@@ -10,14 +10,17 @@ insights and comparisons). They can be served by the same worker or by separate 
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
+import redis
 import structlog
 from celery import Celery, Task
 from celery.signals import setup_logging, task_postrun, task_prerun
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.metrics import JobMetricsStore
 from app.services.task_dispatcher import ANALYSIS_QUEUE, INGESTION_QUEUE
 
 settings = get_settings()
@@ -64,8 +67,25 @@ def _configure_worker_logging(**_: Any) -> None:
     configure_logging(settings.model_copy(update={"service_name": "celery-worker"}))
 
 
+# Start time of the jobs running in this process (prerun and postrun run in the same
+# child process), and the Redis client of the job metrics, created after the fork.
+_started: dict[str, float] = {}
+_metrics_store: JobMetricsStore | None = None
+
+
+def _job_metrics() -> JobMetricsStore:
+    global _metrics_store
+    if _metrics_store is None:
+        client = redis.Redis.from_url(
+            settings.redis_url, socket_connect_timeout=1, socket_timeout=1
+        )
+        _metrics_store = JobMetricsStore(client)
+    return _metrics_store
+
+
 @task_prerun.connect
 def _bind_task_context(task_id: str, task: Task, args: tuple[Any, ...], **_: Any) -> None:
+    _started[task_id] = time.perf_counter()
     headers = task.request.headers or {}
     request_id = getattr(task.request, "request_id", None) or headers.get("request_id")
     structlog.contextvars.clear_contextvars()
@@ -75,5 +95,13 @@ def _bind_task_context(task_id: str, task: Task, args: tuple[Any, ...], **_: Any
 
 
 @task_postrun.connect
-def _clear_task_context(**_: Any) -> None:
+def _record_task(task_id: str, task: Task, state: str | None = None, **_: Any) -> None:
+    started = _started.pop(task_id, None)
+    if started is not None and settings.metrics_enabled:
+        try:
+            _job_metrics().record(task.name, state or "unknown", time.perf_counter() - started)
+        except Exception as exc:  # metrics must never make a job fail
+            structlog.get_logger(__name__).warning(
+                "job_metrics_not_recorded", error=type(exc).__name__
+            )
     structlog.contextvars.clear_contextvars()

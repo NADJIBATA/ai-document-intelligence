@@ -164,6 +164,10 @@ class Settings(BaseSettings):
     # Jobs that call the LLM several times (insight regeneration, comparisons).
     rate_limit_analysis: str = "10/minute"
 
+    # ------------------------------------------------------------ monitoring
+    # GET /metrics (Prometheus). Only reachable on the internal network (nginx blocks it).
+    metrics_enabled: bool = True
+
     # ------------------------------------------------------------ validators
     @field_validator("cors_origins", "allowed_extensions", "bm25_languages", mode="before")
     @classmethod

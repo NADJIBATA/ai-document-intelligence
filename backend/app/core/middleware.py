@@ -18,6 +18,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.context import bind_request_context, clear_request_context, sanitize_request_id
 from app.core.exceptions import error_body
+from app.core.metrics import HTTP_DURATION, HTTP_IN_PROGRESS, HTTP_REQUESTS
 
 logger = structlog.get_logger("app.access")
 
@@ -79,3 +80,62 @@ class RequestContextMiddleware:
                 client_ip=client[0] if client else None,
             )
             clear_request_context()
+
+
+class MetricsMiddleware:
+    """Counts the HTTP requests and measures their duration (pure ASGI).
+
+    Requests are labelled with the *route template* (``/api/documents/{document_id}``),
+    never with the raw path: identifiers would create an unbounded number of series.
+    Paths that match no route are grouped under ``unmatched``.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("path") == "/metrics":
+            await self.app(scope, receive, send)
+            return
+
+        status_code = 500
+        start = time.perf_counter()
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        HTTP_IN_PROGRESS.inc()
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            HTTP_IN_PROGRESS.dec()
+            route = route_template(scope)
+            method = scope.get("method", "")
+            HTTP_REQUESTS.inc(method=method, route=route, status=str(status_code))
+            HTTP_DURATION.observe(time.perf_counter() - start, method=method, route=route)
+
+
+def route_template(scope: Scope) -> str:
+    """Template of the matched route, e.g. ``/api/documents/{document_id}``.
+
+    Depending on the FastAPI version, the route stored in the scope holds either the full
+    template or only the part below the prefixes of the routers that include it
+    (``/documents/{document_id}``). The missing prefix is then taken from the request
+    path: it is the part before the suffix that the route matches. The prefixes of this
+    application are literal (``/api``), so no identifier can end up in the label.
+    """
+    route = scope.get("route")
+    template = getattr(route, "path", None)
+    if not isinstance(template, str) or not template:
+        return "unmatched"
+    path: str = scope.get("path", "")
+    regex = getattr(route, "path_regex", None)
+    if regex is None:
+        return template
+    for index, char in enumerate(path):
+        if char == "/" and regex.fullmatch(path[index:]):
+            return path[:index] + template
+    return template

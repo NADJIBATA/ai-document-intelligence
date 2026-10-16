@@ -1,0 +1,103 @@
+# Alerting rules. They are evaluated by Prometheus and shown in its "Alerts" page and in
+# Grafana; sending notifications (e-mail, Slack...) requires an Alertmanager, which is
+# not part of this stack.
+groups:
+  - name: docintel-availability
+    rules:
+      - alert: DocintelBackendDown
+        expr: up{job="docintel-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: The API does not answer the Prometheus scrapes.
+          description: The backend container is down or /metrics fails for more than 1 minute.
+
+      - alert: DocintelHighErrorRate
+        expr: |
+          (
+            sum(rate(docintel_http_requests_total{status=~"5.."}[5m]))
+              / sum(rate(docintel_http_requests_total[5m]))
+          ) > 0.05
+          and sum(rate(docintel_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: More than 5 % of the API requests fail with a 5xx error.
+          description: "Error rate: {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: DocintelMetricsSourceFailing
+        expr: increase(docintel_metrics_collector_errors_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Metrics source {{ $labels.collector }} fails (PostgreSQL or Redis)."
+
+  - name: docintel-performance
+    rules:
+      - alert: DocintelSlowApi
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(docintel_http_request_duration_seconds_bucket{route!~"/api/chat|/api/documents|/api/comparisons.*|.*/insights.*"}[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 95 % of the API requests (excluding chat, uploads and analyses) take more than 2 s.
+
+      - alert: DocintelSlowChat
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(docintel_http_request_duration_seconds_bucket{route="/api/chat"}[10m]))
+          ) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 5 % of the chat answers take more than 30 s.
+
+  - name: docintel-rag
+    rules:
+      - alert: DocintelSearchDegraded
+        expr: sum by (stage) (increase(docintel_retrieval_degraded_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Searches run without the {{ $labels.stage }} stage."
+          description: The embedding or reranker server (vLLM) is unavailable; answers are of lower quality.
+
+      - alert: DocintelLlmErrors
+        expr: increase(docintel_chat_answers_total{outcome="llm_error"}[10m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: The language model API fails (key, quota or outage).
+
+  - name: docintel-jobs
+    rules:
+      - alert: DocintelQueueBacklog
+        expr: docintel_queue_length > 20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} jobs wait in the {{ $labels.queue }} queue for 15 minutes."
+          description: The worker is down or too slow; check `docker compose logs worker`.
+
+      - alert: DocintelJobFailures
+        expr: sum by (task) (increase(docintel_jobs_total{state="failure"}[1h])) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "Background job {{ $labels.task }} failed more than 3 times in 1 hour."
+
+      - alert: DocintelDocumentsFailing
+        expr: delta(docintel_documents{status="failed"}[1h]) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 3 documents failed to be processed in 1 hour.

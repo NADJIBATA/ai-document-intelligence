@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.config import Settings
 from app.core.exceptions import BadRequestError
+from app.core.metrics import record_retrieval
 from app.models.user import User
 from app.rag.pipeline import RAGPipeline
 from app.rag.types import RetrievalResult
@@ -48,6 +49,7 @@ class SearchService:
             document_ids=document_ids,
             top_k=top_k,
         )
+        record_retrieval("search", result.timings_ms, result.degraded)
         # The query text is user content: only its size is logged.
         logger.info(
             "search_completed",

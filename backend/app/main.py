@@ -20,10 +20,12 @@ from starlette.concurrency import run_in_threadpool
 from app.api.router import api_router
 from app.api.routes.health import ReadinessCheck
 from app.api.routes.health import router as health_router
+from app.api.routes.metrics import router as metrics_router
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
-from app.core.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
+from app.core.metrics import APP_INFO
+from app.core.middleware import REQUEST_ID_HEADER, MetricsMiddleware, RequestContextMiddleware
 from app.core.rate_limit import (
     InMemoryRateLimitBackend,
     RateLimitBackend,
@@ -40,8 +42,19 @@ from app.llm.base import LLMProvider
 from app.llm.factory import build_llm
 from app.rag.factory import RetrievalComponents, build_retrieval
 from app.rag.vector_store import VectorStore, VectorStoreError
+from app.services.metrics_service import (
+    Collector,
+    database_collector,
+    job_collector,
+    queue_collector,
+)
 from app.services.storage_service import MinioStorage, ObjectStorage, StorageError
-from app.services.task_dispatcher import CeleryTaskDispatcher, TaskDispatcher
+from app.services.task_dispatcher import (
+    ANALYSIS_QUEUE,
+    INGESTION_QUEUE,
+    CeleryTaskDispatcher,
+    TaskDispatcher,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -159,6 +172,21 @@ def create_app(
         app.state.retrieval = components
         app.state.llm = llm if llm is not None else build_llm(settings)
 
+        # Celery's Redis broker (another database than the application data).
+        broker = Redis.from_url(
+            settings.celery_broker_url or settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
+        collectors: dict[str, Collector] = {
+            "database": database_collector(app.state.session_factory),
+            "queues": queue_collector(broker, (INGESTION_QUEUE, ANALYSIS_QUEUE)),
+            "jobs": job_collector(redis),
+        }
+        app.state.metrics_collectors = collectors
+        APP_INFO.set(1, version=settings.app_version, env=settings.app_env)
+
         app.state.readiness_checks = {
             "database": _database_check(engine),
             "redis": _redis_check(redis),
@@ -172,6 +200,7 @@ def create_app(
             if sync_engine is not None:
                 components.close()
                 sync_engine.dispose()
+            await broker.aclose()
             await redis.aclose()
             await engine.dispose()
             logger.info("application_shutdown")
@@ -199,8 +228,12 @@ def create_app(
         allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER],
         expose_headers=[REQUEST_ID_HEADER],
     )
+    if settings.metrics_enabled:
+        app.add_middleware(MetricsMiddleware)
     app.add_middleware(RequestContextMiddleware)
 
     app.include_router(health_router)
+    if settings.metrics_enabled:
+        app.include_router(metrics_router)
     app.include_router(api_router)
     return app

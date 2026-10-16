@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.config import Settings
 from app.core.exceptions import BadRequestError, NotFoundError, ServiceUnavailableError
+from app.core.metrics import CHAT_ANSWERS, record_answer, record_retrieval
 from app.llm.base import ChatMessage, LLMError
 from app.models.conversation import Conversation, Message
 from app.models.enums import MessageRole
@@ -110,6 +111,7 @@ class ChatService:
         retrieval = await run_in_threadpool(
             self._pipeline.retrieve, question, user.id, document_ids=document_ids
         )
+        record_retrieval("chat", retrieval.timings_ms, retrieval.degraded)
 
         # 3. Generation, from the retrieved passages only.
         try:
@@ -117,11 +119,19 @@ class ChatService:
                 self._generator.generate, question, retrieval.chunks, history
             )
         except LLMError as exc:
+            CHAT_ANSWERS.inc(outcome="llm_error")
             logger.error("llm_call_failed", error=str(exc), status_code=exc.status_code)
             raise ServiceUnavailableError(
                 "The language model is temporarily unavailable. Please retry later.",
                 code="llm_unavailable",
             ) from exc
+        record_answer(
+            answered=answer.answered,
+            model=answer.model,
+            llm_ms=answer.llm_ms,
+            prompt_tokens=answer.prompt_tokens,
+            completion_tokens=answer.completion_tokens,
+        )
 
         # 4. Persistence: the question and its answer are written together, so a failed
         #    exchange leaves no orphan question in the history.

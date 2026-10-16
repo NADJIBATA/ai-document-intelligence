@@ -30,7 +30,7 @@
 | NF1 | **Isolation stricte entre utilisateurs** | Filtre `user_id` **dans** la requête Qdrant + corpus BM25 construit par utilisateur + ré-hydratation des chunks via PostgreSQL filtrée par `owner_id` (défense en profondeur) + 404 (et non 403) sur ressource d'autrui |
 | NF2 | Upload non bloquant | L'API écrit MinIO + ligne `documents`, publie un job Celery, répond `202 Accepted` |
 | NF3 | Modèles remplaçables | Interfaces `EmbeddingProvider`, `Reranker`, `LLMProvider`, `LexicalRetriever`, `DocumentExtractor`, `Chunker` + factories pilotées par `.env` |
-| NF4 | Observabilité | `/metrics` Prometheus (API + worker), logs JSON structurés avec `request_id`/`user_id`, dashboard Grafana provisionné |
+| NF4 | Observabilité | `/metrics` Prometheus (API + jobs du worker via Redis), logs JSON structurés avec `request_id`/`user_id`, dashboard Grafana provisionné |
 | NF5 | Sécurité | Argon2id, JWT court + refresh rotatif hashé en base, validation MIME par magic bytes, limite de taille, CORS, rate limiting Redis, redaction des secrets dans les logs, garde-fous prompt injection |
 | NF6 | Déployable | `git clone && cp .env.example .env && docker compose up -d` ; healthchecks + `depends_on: condition` ; migrations via service one-shot |
 | NF7 | Qualité | Ruff (lint + format), mypy, pytest unit/integration, ESLint + TS strict, CI GitHub Actions |
@@ -264,7 +264,6 @@ ai-document-intelligence/
 │   │   └── workers/
 │   │       ├── __init__.py
 │   │       ├── celery_app.py        # config, routes de queues, signaux logs/métriques
-│   │       ├── metrics_server.py    # /metrics du worker (multiprocess)
 │   │       └── tasks/
 │   │           ├── __init__.py
 │   │           ├── documents.py     # process_document, cleanup_document_artifacts
@@ -845,27 +844,33 @@ Deux niveaux : l'image frontend sert les fichiers statiques (fallback SPA, `/ass
 
 ### 7.3 Monitoring
 
-Métriques (préfixe `docintel_`) :
+`GET /metrics` (format texte Prometheus) sur le backend, scrapé par Prometheus sur le réseau Docker interne ; nginx répond 404 sur `/metrics`. Registre maison (`app/core/metrics.py`, compteurs, jauges, histogrammes) plutôt que `prometheus_client` : aucune dépendance, et le problème du multiprocessus Celery est réglé par Redis (ci-dessous).
 
-| Métrique | Type | Labels |
-|----------|------|--------|
-| `http_requests_total` | Counter | method, route (template), status |
-| `http_request_duration_seconds` | Histogram | method, route |
-| `http_exceptions_total` | Counter | route, exception |
-| `documents_processed_total` | Counter | status, extension |
-| `document_processing_duration_seconds` | Histogram | stage (extract/clean/chunk/embed/index/total) |
-| `embedding_duration_seconds` | Histogram | kind (query/documents) |
-| `bm25_search_duration_seconds` | Histogram | — |
-| `bm25_index_build_duration_seconds` | Histogram | — |
-| `qdrant_search_duration_seconds` | Histogram | — |
-| `rerank_duration_seconds` | Histogram | — |
-| `llm_request_duration_seconds` | Histogram | provider, operation |
-| `llm_tokens_total` | Counter | provider, type (prompt/completion) |
-| `llm_errors_total` | Counter | provider, reason |
-| `rag_insufficient_context_total` | Counter | — |
-| `prompt_injection_flags_total` | Counter | — |
+| Métrique (`docintel_…`) | Type | Labels | Source |
+|-------------------------|------|--------|--------|
+| `http_requests_total` | counter | method, route (template), status | middleware API |
+| `http_request_duration_seconds` | histogram | method, route | middleware API |
+| `http_requests_in_progress` | gauge | — | middleware API |
+| `retrievals_total` | counter | origin (search, chat) | services |
+| `retrieval_stage_duration_seconds` | histogram | stage (bm25, dense, fusion, hydration, rerank, total) | services |
+| `retrieval_degraded_total` | counter | stage | services |
+| `chat_answers_total` | counter | outcome (answered, refused, llm_error) | service chat |
+| `llm_request_duration_seconds` | histogram | operation | service chat |
+| `llm_tokens_total` | counter | type (prompt, completion) | service chat |
+| `documents` | gauge | status | PostgreSQL, à chaque scrape |
+| `users` | gauge | — | PostgreSQL, à chaque scrape |
+| `queue_length` | gauge | queue (ingestion, analysis) | broker Redis (`LLEN`), à chaque scrape |
+| `jobs_total` | counter | task, state | worker → Redis |
+| `job_duration_seconds` | histogram | task | worker → Redis |
+| `metrics_collector_errors_total` | counter | collector | scrape |
+| `app_info` | gauge | version, env | démarrage |
 
-Label `route` = template FastAPI (`/api/documents/{id}`), jamais l'URL brute (cardinalité maîtrisée). Worker : `prometheus_client` en mode multiprocess (prefork Celery) exposé sur `:9100`. Dashboard Grafana provisionné : trafic, p50/p95/p99, taux d'erreur, latences RAG par étape, documents traités/échoués, latence LLM. Alertes Prometheus : taux 5xx, p95 chat, échecs d'ingestion.
+- **Labels sans données utilisateur** : jamais d'id, d'e-mail, de nom de fichier ni de question. `route` est le template (`/api/documents/{document_id}`), les chemins inconnus sont regroupés sous `unmatched` (cardinalité bornée). Un test vérifie qu'aucun id ni e-mail n'apparaît dans `/metrics`.
+- **Worker Celery** : les jobs tournent dans des processus enfants (prefork) ; chaque fin de job (`task_postrun`) incrémente trois hashes Redis (compteur par état, somme des durées, buckets), lus par l'API au scrape. Une erreur Redis n'impacte jamais un job.
+- **Sources indépendantes** : si PostgreSQL ou Redis ne répond pas (délai 3 s), les métriques correspondantes manquent à ce scrape, les autres sont servies.
+- **Valeurs exactes avec un processus API par conteneur** (`UVICORN_WORKERS=1`, défaut) : monter en charge par des conteneurs supplémentaires.
+- **Prometheus** (`prom/prometheus:v3.5.0`, rétention 15 j, `127.0.0.1:9090`) et **Grafana** (`grafana/grafana:11.6.0`, `127.0.0.1:3000`, mot de passe admin dans `.env`, inscription et accès anonyme désactivés) ; source de données et tableau de bord « AI Document Intelligence » provisionnés (vue d'ensemble, API, recherche et réponses, jobs).
+- **Alertes** (`monitoring/prometheus/alerts.yml`) : API injoignable, > 5 % de 5xx, p95 API > 2 s, p95 chat > 30 s, recherche dégradée (vLLM indisponible), erreurs LLM, file d'attente > 20 jobs pendant 15 min, échecs de jobs et de documents, source de métriques en échec. Visibles dans Prometheus et Grafana ; l'envoi de notifications demande un Alertmanager (non inclus).
 
 ### 7.4 Logging
 
@@ -1060,3 +1065,11 @@ Sorties : `evaluation/results/results_<timestamp>.csv` (`system, k, recall, prec
   - Rendu par un **analyseur maison** (`frontend/src/lib/markdown.ts`, ~400 lignes, zéro dépendance) plutôt que `react-markdown` : sous-ensemble exact de ce que le prompt autorise, arbre rendu en éléments React (aucun `innerHTML`, donc aucune injection possible depuis un document cité), HTML et liens affichés comme texte, l'analyseur ne lève jamais d'exception. Les marqueurs `[S1]` restent des pastilles cliquables partout.
   - Alignement des colonnes de tableau par classes Tailwind et non par styles en ligne (CSP `style-src 'self'`).
   - `parse_citations` conserve la structure Markdown (sauts de ligne, puces, barres de tableau) : test dédié.
+- 2026-10-15 — **Phase 10 livrée** (monitoring) :
+  - **Registre de métriques maison** au lieu de `prometheus_client` : ~440 lignes testées, zéro dépendance, format texte Prometheus standard.
+  - **Métriques du worker via Redis** au lieu du mode multiprocess de `prometheus_client` et d'un second endpoint `:9100` (prévus en Phase 1) : un seul point de scrape, pas de répertoire partagé à nettoyer entre redémarrages. `app/workers/metrics_server.py` n'est plus utilisé.
+  - Comptages métier (documents par statut, utilisateurs, files Celery) lus **au moment du scrape** plutôt que maintenus en mémoire : toujours exacts, y compris après un redémarrage.
+  - Template de route reconstruit depuis le chemin quand FastAPI ne fournit que la partie relative au routeur inclus (FastAPI ≥ 0.13x) ; test dédié.
+  - Pas d'exporteurs PostgreSQL / Redis / cAdvisor : hors du périmètre demandé, ajoutables comme cibles de scrape supplémentaires.
+  - Non vérifiable dans l'environnement de développement (registre Docker inaccessible) : démarrage réel de Prometheus et Grafana ; validé : `docker compose config`, YAML et JSON du tableau de bord, tests de `/metrics` contre l'application.
+  - Corrections apportées sur le poste cible après la Phase 9 et reprises : `VLLM_USE_V2_MODEL_RUNNER=0` pour vLLM sous WSL 2 (Docker Desktop : « UVA is not available ») ; variable `QDRANT__SERVICE__API_KEY` retirée quand elle est vide (une clé vide active quand même l'authentification et renvoie 401).
