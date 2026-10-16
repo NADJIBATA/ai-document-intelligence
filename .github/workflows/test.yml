@@ -1,0 +1,169 @@
+# Quality gate of every push and pull request: lint, types, tests (with real
+# PostgreSQL, Redis, MinIO and Qdrant), frontend checks, configuration checks and a
+# secret scan. No secret is needed: the test services use throw-away credentials.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION: "22"
+
+jobs:
+  backend:
+    name: Backend (lint, types, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+            backend/requirements.lock
+
+      - name: Install dependencies (versions of requirements.lock)
+        working-directory: backend
+        run: pip install -r requirements-dev.txt -c requirements.lock
+
+      - name: Ruff (lint and format)
+        working-directory: backend
+        run: |
+          ruff check . ../evaluation --config pyproject.toml
+          ruff format --check . ../evaluation --config pyproject.toml
+
+      - name: Mypy (strict)
+        run: |
+          (cd backend && mypy)
+          MYPYPATH=backend mypy --config-file backend/pyproject.toml -p evaluation
+
+      - name: Start the test services
+        run: |
+          docker compose -f docker-compose.test.yml up -d --wait
+          # MinIO and Qdrant have no healthcheck in their images: wait for their HTTP API.
+          for url in http://127.0.0.1:9002/minio/health/live http://127.0.0.1:6335/readyz; do
+            for _ in $(seq 1 60); do curl -fsS "$url" > /dev/null && break; sleep 1; done
+            curl -fsS "$url" > /dev/null
+          done
+
+      - name: Migrations match the models
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://docintel:docintel@127.0.0.1:5433/docintel_test
+        run: |
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
+
+      - name: Tests (unit + integration, coverage)
+        working-directory: backend
+        env:
+          # A missing service fails the run instead of skipping its tests.
+          REQUIRE_INTEGRATION: "1"
+          REQUIRE_MINIO: "1"
+          REQUIRE_QDRANT: "1"
+        run: pytest tests --cov --cov-report=term --cov-report=xml
+
+      - name: RAG evaluation (sample dataset, fake models)
+        run: python -m evaluation.run --fake-models --output-dir "$RUNNER_TEMP/evaluation"
+
+      - name: Upload coverage and evaluation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-reports
+          path: |
+            backend/coverage.xml
+            ${{ runner.temp }}/evaluation/
+          if-no-files-found: ignore
+
+      - name: Service logs (on failure)
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs --no-color --tail=200
+
+  frontend:
+    name: Frontend (types, lint, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  config:
+    name: Configuration (Compose, Prometheus, nginx, scripts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Docker Compose files
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+          docker compose -f docker-compose.test.yml config --quiet
+
+      - name: Prometheus configuration and alerting rules
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/monitoring/prometheus:/cfg:ro" \
+            prom/prometheus:v3.5.0 check rules /cfg/alerts.yml
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$PWD/monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro" \
+            prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+
+      - name: Grafana dashboard is valid JSON
+        run: python3 -m json.tool monitoring/grafana/dashboards/docintel.json > /dev/null
+
+      - name: nginx configuration (rendered from the template)
+        run: |
+          docker run --rm -e MAX_UPLOAD_SIZE_MB=50 \
+            -v "$PWD/nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro" \
+            nginx:1.28-alpine nginx -t
+          docker run --rm -v "$PWD/frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginxinc/nginx-unprivileged:1.28-alpine nginx -t
+
+      - name: Shell scripts
+        run: shellcheck --severity=warning scripts/*.sh
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # the whole history: a secret removed later is still leaked
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -150,6 +150,7 @@ ai-document-intelligence/
 │       ├── test.yml                 # lint + mypy + pytest + frontend lint/test/build
 │       ├── docker.yml               # build & push images GHCR (buildx, cache)
 │       └── deploy.yml               # déploiement SSH manuel/tag, secrets via GitHub Environments
+│   └── dependabot.yml
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py
@@ -887,15 +888,27 @@ Processeur de **redaction** : toute clé correspondant à `password|token|author
 ### 7.5 CI/CD
 
 ```
-push / PR
- ├─ backend-lint     : ruff check, ruff format --check, mypy
- ├─ backend-test     : pytest unit + integration (services GitHub : postgres, redis, qdrant, minio), couverture
- ├─ frontend         : npm ci, eslint, tsc --noEmit, vitest, vite build
- └─ docker (main/tags, après succès) : buildx backend + frontend → ghcr.io, tags sha + semver, cache GHA
-deploy.yml (workflow_dispatch / tag v*) : SSH vers le serveur, docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && up -d, puis smoke test /ready
+test.yml    (push main, PR)
+ ├─ backend   : ruff (lint + format, backend + evaluation), mypy strict, services de
+ │              docker-compose.test.yml (PostgreSQL, Redis, MinIO, Qdrant), alembic
+ │              upgrade/check/downgrade, pytest unit + intégration (REQUIRE_* = 1 : un
+ │              service absent fait échouer), couverture, évaluation RAG --fake-models
+ ├─ frontend  : npm ci, typecheck, eslint, vitest, build
+ ├─ config    : docker compose config (base, prod, test), promtool (règles + config),
+ │              nginx -t (template rendu), JSON Grafana, shellcheck
+ └─ secrets   : gitleaks sur tout l'historique
+docker.yml  (PR : build seul ; main et tags v*.*.* : build + push GHCR)
+ └─ docintel-backend / docintel-frontend : tags 1.2.3 + latest (tag), main + sha-xxxxxxx
+deploy.yml  (manuel, depuis le tag de la version, environnement GitHub « production »)
+ └─ vérifie les images → SSH → scripts/deploy.sh : sauvegarde PostgreSQL, checkout du
+    commit, pull, up -d (migrations par le service migrate), attente de /ready via nginx
 ```
 
-Secrets (`DEPLOY_HOST`, `DEPLOY_SSH_KEY`…) stockés dans **GitHub Environments** (avec approbation manuelle pour `production`), jamais dans les fichiers du dépôt. Le `.env` de production vit uniquement sur le serveur.
+- **Aucun secret dans le dépôt ni dans les workflows** : les tests utilisent des identifiants jetables ; GHCR est alimenté avec le `GITHUB_TOKEN` éphémère du run ; le déploiement lit la clé SSH et l'empreinte de l'hôte dans les secrets de l'environnement GitHub `production` (approbation manuelle possible), hôte/utilisateur/chemin dans ses variables. Le `.env` de production (mots de passe, `JWT_SECRET`, clé OpenAI) reste sur le serveur.
+- Jeton de registre transmis au serveur par l'entrée standard (jamais en argument), session `docker logout` en fin de script ; empreinte SSH épinglée (`StrictHostKeyChecking=yes`).
+- Versions reproductibles : `requirements.lock` (runtime + outils), `package-lock.json` (`npm ci`), images et actions épinglées ; Dependabot hebdomadaire (pip, npm, actions, images Docker).
+- Rollback : relancer `deploy.yml` avec la version précédente (images immuables par tag).
+- `pre-commit` optionnel (ruff, refus des `.env` et des clés privées).
 
 **Ruff format** remplace Black (compatible à >99 %, un seul outil, beaucoup plus rapide).
 
@@ -1073,3 +1086,9 @@ Sorties : `evaluation/results/results_<timestamp>.csv` (`system, k, recall, prec
   - Pas d'exporteurs PostgreSQL / Redis / cAdvisor : hors du périmètre demandé, ajoutables comme cibles de scrape supplémentaires.
   - Non vérifiable dans l'environnement de développement (registre Docker inaccessible) : démarrage réel de Prometheus et Grafana ; validé : `docker compose config`, YAML et JSON du tableau de bord, tests de `/metrics` contre l'application.
   - Corrections apportées sur le poste cible après la Phase 9 et reprises : `VLLM_USE_V2_MODEL_RUNNER=0` pour vLLM sous WSL 2 (Docker Desktop : « UVA is not available ») ; variable `QDRANT__SERVICE__API_KEY` retirée quand elle est vide (une clé vide active quand même l'authentification et renvoie 401).
+- 2026-10-16 — **Phase 11 livrée** (CI/CD) :
+  - Services de test lancés par `docker-compose.test.yml` plutôt que par les `services:` de GitHub Actions : ceux-ci ne permettent pas de passer une commande (`minio server /data`), et la CI utilise exactement l'infrastructure des développeurs.
+  - Contrôles de configuration en CI (`promtool`, `nginx -t`, `docker compose config`) : ils valident ce qui n'a pas pu être démarré dans l'environnement de développement (règles PromQL, configuration nginx rendue).
+  - Déploiement **manuel** (bouton + approbation) plutôt qu'automatique sur tag : la production change seulement sur décision ; le script exécuté sur le serveur est versionné (`scripts/deploy.sh`) et fait une sauvegarde PostgreSQL avant chaque mise à jour.
+  - Vérification après déploiement par `/ready` à travers nginx, pas par le smoke test complet (qui créerait des comptes jetables en production) ; celui-ci reste disponible à la main.
+  - `APP_VERSION` fixé par Compose pour l'API, le worker et les migrations : `/health` affiche la version réellement déployée.

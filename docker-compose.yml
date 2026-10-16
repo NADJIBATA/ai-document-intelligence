@@ -26,6 +26,8 @@ x-backend: &backend
   image: ${BACKEND_IMAGE:-docintel-backend}:${APP_VERSION:-0.1.0}
   env_file: .env
   environment:
+    # Tag of the running image (also shown by /health); overrides the value of .env.
+    APP_VERSION: ${APP_VERSION:-0.1.0}
     DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-docintel}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-docintel}
     REDIS_URL: redis://redis:6379/0
     CELERY_BROKER_URL: redis://redis:6379/1

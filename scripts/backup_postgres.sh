@@ -26,5 +26,7 @@ mv "$target.partial" "$target"
 echo "backup written: $target ($(du -h "$target" | cut -f1))"
 
 if [ "$KEEP" -gt 0 ]; then
-    ls -1t "$BACKUP_DIR"/docintel_*.dump | tail -n +"$((KEEP + 1))" | xargs -r rm -f --
+    # File names start with a UTC timestamp: the reverse name order is newest first.
+    find "$BACKUP_DIR" -maxdepth 1 -name 'docintel_*.dump' | sort -r \
+        | tail -n +"$((KEEP + 1))" | xargs -r rm -f --
 fi

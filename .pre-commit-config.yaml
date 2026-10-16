@@ -1,0 +1,26 @@
+# Optional local checks before each commit (the same ones run in CI):
+#   pip install pre-commit && pre-commit install
+# Hooks use the tools of the backend virtual environment (no download).
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --config backend/pyproject.toml --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format --config backend/pyproject.toml
+        language: system
+        types: [python]
+      - id: no-env-file
+        name: no .env file committed
+        entry: .env files contain secrets and must not be committed (use .env.example)
+        language: fail
+        files: (^|/)\.env(\..*)?$
+        exclude: (^|/)\.env\.example$
+      - id: no-private-key
+        name: no private key committed
+        entry: "-----BEGIN [A-Z ]*PRIVATE KEY-----"
+        language: pygrep

@@ -1,0 +1,108 @@
+# Manual deployment of a published version to a server over SSH.
+#
+# Nothing secret is written in this repository. The workflow only reads values that you
+# store in the GitHub environment "production" (Settings > Environments), where you can
+# also require a manual approval before every deployment:
+#
+#   secrets    DEPLOY_SSH_KEY       private key of a dedicated deploy user (ed25519)
+#              DEPLOY_KNOWN_HOSTS   output of `ssh-keyscan -t ed25519 <host>`
+#   variables  DEPLOY_HOST, DEPLOY_USER, DEPLOY_PATH (clone of the repo on the server),
+#              DEPLOY_PORT (optional, default 22)
+#
+# The application secrets (.env: passwords, JWT secret, OpenAI key) stay on the server
+# and never transit through GitHub. Images are pulled from GHCR with this run's
+# short-lived token. See scripts/deploy.sh for the steps on the server.
+name: Deploy
+
+# Run it from the tag of the version ("Use workflow from: v1.2.0"): the Compose files
+# and configuration of that commit are used on the server with the images of that tag.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image tag to deploy (e.g. 1.2.0 for tag v1.2.0, or main)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+    env:
+      VERSION: ${{ inputs.version }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the inputs and the configuration
+        env:
+          HAS_KEY: ${{ secrets.DEPLOY_SSH_KEY != '' }}
+          HAS_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS != '' }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+            echo "::error::invalid version '$VERSION'"; exit 1
+          fi
+          # Run from a version tag, the configuration files and the images must match.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] && [ "${GITHUB_REF#refs/tags/v}" != "$VERSION" ]; then
+            echo "::error::workflow run from ${GITHUB_REF#refs/tags/} but version is $VERSION"; exit 1
+          fi
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_PATH; do
+            if [ -z "${!name}" ]; then echo "::error::variable $name is not set"; exit 1; fi
+          done
+          if [ "$HAS_KEY" != "true" ] || [ "$HAS_KNOWN_HOSTS" != "true" ]; then
+            echo "::error::secrets DEPLOY_SSH_KEY and DEPLOY_KNOWN_HOSTS are required"; exit 1
+          fi
+
+      - name: The images of this version exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "IMAGE_PREFIX=ghcr.io/$owner" >> "$GITHUB_ENV"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin > /dev/null
+          for image in docintel-backend docintel-frontend; do
+            docker manifest inspect "ghcr.io/$owner/$image:$VERSION" > /dev/null \
+              || { echo "::error::ghcr.io/$owner/$image:$VERSION not found (run the Docker images workflow first)"; exit 1; }
+          done
+          docker logout ghcr.io > /dev/null
+
+      - name: SSH configuration
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Host key pinned: no "accept new host" on first connection.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The token goes through stdin (never on a command line), followed by the script.
+          { printf '%s\n' "$REGISTRY_TOKEN"; cat scripts/deploy.sh; } | ssh \
+            -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            -o StrictHostKeyChecking=yes -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "read -r REGISTRY_TOKEN; export REGISTRY_TOKEN; bash -s -- \
+              $(printf '%q ' "$DEPLOY_PATH" "$VERSION" "$GITHUB_SHA" "$IMAGE_PREFIX" "$GITHUB_ACTOR")"
+
+      - name: Remove the SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
